@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f2f5ef">
+  <title>Pico Temperature</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f2f5ef;
+      --ink: #182321;
+      --muted: #66736e;
+      --line: #cbd5ce;
+      --green: #176c56;
+      --hot: #d35e3d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image: linear-gradient(rgba(24, 35, 33, .035) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(24, 35, 33, .035) 1px, transparent 1px);
+      background-size: 32px 32px;
+      font-family: "Trebuchet MS", sans-serif;
+    }
+    main {
+      width: min(100% - 40px, 760px);
+      margin: 0 auto;
+      padding: 38px 0 48px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow, .status, .label, .footnote {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: .76rem;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .eyebrow { color: var(--muted); }
+    .status { display: flex; align-items: center; gap: 8px; color: var(--green); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+    h1 {
+      margin: 38px 0 8px;
+      font: 500 clamp(2rem, 7vw, 3.35rem)/1.05 Georgia, serif;
+    }
+    .subtitle { margin: 0 0 26px; color: var(--muted); }
+    .instrument {
+      padding: clamp(22px, 6vw, 42px);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, .66);
+      box-shadow: 0 14px 40px rgba(24, 35, 33, .06);
+    }
+    .label { color: var(--muted); }
+    .reading { display: flex; align-items: baseline; gap: 10px; margin: 12px 0 24px; }
+    #celsius { font: 500 clamp(4.5rem, 18vw, 8rem)/.95 Georgia, serif; font-variant-numeric: tabular-nums; }
+    .unit { color: var(--muted); font: 1.4rem Georgia, serif; }
+    .meter-track { height: 8px; overflow: hidden; border-radius: 8px; background: #dfe6df; }
+    .meter-fill { width: 0; height: 100%; border-radius: inherit; background: var(--green); transition: width .5s ease, background-color .5s ease; }
+    .details { display: flex; justify-content: space-between; gap: 16px; margin-top: 12px; color: var(--muted); font-size: .9rem; }
+    .sensor-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 24px; border-top: 1px solid var(--line); }
+    .sensor-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; padding: 14px 10px 14px 0; border-bottom: 1px solid var(--line); }
+    .sensor-name { color: var(--muted); font-size: .9rem; }
+    .sensor-value { text-align: right; font-size: .98rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+    .empty-state { grid-column: 1 / -1; padding: 18px 0; color: var(--muted); }
+    .footnote { margin-top: 22px; color: var(--muted); text-transform: none; }
+    @media (max-width: 560px) {
+      main { width: min(100% - 28px, 760px); padding-top: 24px; }
+      .details { align-items: flex-start; flex-direction: column; gap: 6px; }
+      .eyebrow, .status { font-size: .67rem; }
+      .sensor-grid { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="eyebrow">Pico 2 W / Sensor Hub</span>
+      <span class="status" id="status" role="status"><span class="dot"></span><span id="status-text">Connecting</span></span>
+    </header>
+    <h1>Board telemetry</h1>
+    <p class="subtitle">Live readings from the Pico 2 W and its sensors.</p>
+    <section class="instrument" aria-label="Live board sensor readings">
+      <span class="label">Onboard processor temperature</span>
+      <div class="reading"><span id="celsius">--.-</span><span class="unit">&deg;C</span></div>
+      <div class="meter-track" role="meter" aria-label="Temperature scale from -10 to 60 degrees Celsius" aria-valuemin="-10" aria-valuemax="60" aria-valuenow="0" id="meter">
+        <div class="meter-fill" id="meter-fill"></div>
+      </div>
+      <div class="details"><span>-10 &deg;C</span><span id="updated">Waiting for first reading</span><span>60 &deg;C</span></div>
+      <div class="sensor-grid" id="sensor-readings" aria-live="polite"><div class="empty-state">Waiting for sensor readings</div></div>
+    </section>
+    <p class="footnote">Updates every 2 seconds &middot; Local connection</p>
+  </main>
+  <script>
+    const celsius = document.querySelector("#celsius");
+    const status = document.querySelector("#status");
+    const statusText = document.querySelector("#status-text");
+    const updated = document.querySelector("#updated");
+    const meter = document.querySelector("#meter");
+    const meterFill = document.querySelector("#meter-fill");
+    const sensorReadings = document.querySelector("#sensor-readings");
+
+    async function refresh() {
+      try {
+        const response = await fetch("/temperature", { cache: "no-store" });
+        if (!response.ok) throw new Error("Sensor request failed");
+        const data = await response.json();
+        const readings = data.sensors;
+        if (!Array.isArray(readings)) throw new Error("Invalid sensor data");
+
+        const processor = readings.find((reading) => reading.sensor === "Pico processor temperature");
+        const value = processor ? Number.parseFloat(processor.reading) : NaN;
+        if (!Number.isFinite(value)) throw new Error("Invalid processor temperature");
+        celsius.textContent = value.toFixed(1);
+        const percent = Math.max(0, Math.min(100, (value + 10) / 70 * 100));
+        meterFill.style.width = `${percent}%`;
+        meterFill.style.backgroundColor = value >= 45 ? "var(--hot)" : "var(--green)";
+        meter.setAttribute("aria-valuenow", value.toFixed(1));
+        sensorReadings.replaceChildren();
+        if (readings.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
+          empty.textContent = "No sensors enabled or detected";
+          sensorReadings.append(empty);
+        } else {
+          for (const reading of readings) {
+            const row = document.createElement("div");
+            row.className = "sensor-row";
+            const name = document.createElement("span");
+            name.className = "sensor-name";
+            name.textContent = reading.sensor;
+            const value = document.createElement("strong");
+            value.className = "sensor-value";
+            value.textContent = reading.reading;
+            row.append(name, value);
+            sensorReadings.append(row);
+          }
+        }
+        updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        statusText.textContent = "Live";
+        status.style.color = "var(--green)";
+      } catch (error) {
+        statusText.textContent = "Disconnected";
+        status.style.color = "var(--hot)";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 2000);
+  </script>
+</body>
+</html>
